@@ -1,0 +1,9 @@
+Dataset          : conv
+Total menit      : 57
+Kolom fitur      : ['TotalTokens', 'Lag_1', 'Lag_2', 'Lag_3', 'Rolling_Mean_3']
+Train rows       : 45 (78.9%)
+Test rows        : 12 (21.1%)
+Split index      : 45
+Train time range : 2023-11-16 18:18:00 to 2023-11-16 19:02:00
+Test time range  : 2023-11-16 19:03:00 to 2023-11-16 19:14:00
+Scaler range     : 349378.00 - 780667.00 (TotalTokens)

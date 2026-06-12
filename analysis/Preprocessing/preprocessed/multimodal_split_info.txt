@@ -1,0 +1,9 @@
+Dataset          : multimodal
+Total menit      : 10077
+Kolom fitur      : ['TotalTokens', 'Lag_1', 'Lag_2', 'Lag_3', 'Rolling_Mean_3']
+Train rows       : 8061 (80.0%)
+Test rows        : 2016 (20.0%)
+Split index      : 8061
+Train time range : 2024-10-15 12:03:00+00:00 to 2024-10-21 02:23:00+00:00
+Test time range  : 2024-10-21 02:24:00+00:00 to 2024-10-22 11:59:00+00:00
+Scaler range     : 6904.00 - 2161765.00 (TotalTokens)

@@ -1,0 +1,9 @@
+Dataset          : code
+Total menit      : 55
+Kolom fitur      : ['TotalTokens', 'Lag_1', 'Lag_2', 'Lag_3', 'Rolling_Mean_3']
+Train rows       : 44 (80.0%)
+Test rows        : 11 (20.0%)
+Split index      : 44
+Train time range : 2023-11-16 18:20:00 to 2023-11-16 19:03:00
+Test time range  : 2023-11-16 19:04:00 to 2023-11-16 19:14:00
+Scaler range     : 0.00 - 1257868.00 (TotalTokens)

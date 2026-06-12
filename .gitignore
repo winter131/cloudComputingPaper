@@ -1,0 +1,17 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data files (To avoid GitHub 100MB limits)
+*.npy
+*.pkl
+*.gz
+*.rar
+
+# IDEs and environments
+.vscode/
+.idea/
+.ipynb_checkpoints/
+venv/
+env/
