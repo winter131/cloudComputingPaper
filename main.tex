@@ -1,0 +1,340 @@
+\documentclass[conference, a4paper]{IEEEtran}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{cite} % Cleans up citation styles (e.g. [1]-[3] instead of [1],[2],[3])
+\usepackage{url} % Prevents compiling issues with URLs in references
+\usepackage{amsmath, amssymb} % Advanced mathematical formatting
+\usepackage{booktabs} % Professional table rules
+
+\makeatletter
+\newcommand{\linebreakand}{%
+  \end{@IEEEauthorhalign}
+  \hfill\mbox{}\par
+  \mbox{}\hfill\begin{@IEEEauthorhalign}
+}
+\makeatother
+
+\title{Forecasting Token Throughput of LLM Inference Workloads: A Comparative Study on Conversational, Coding, and Multimodal Azure Traces}
+
+\author{
+    \IEEEauthorblockN{Joseph Clio Limantara}
+    \IEEEauthorblockA{\normalfont Department of Informatics \\
+    Institut Teknologi Sepuluh Nopember\\
+    Surabaya, Indonesia \\
+    6025242006@student.its.ac.id}
+    \and
+    \IEEEauthorblockN{Ghozyan Hilman Pradana}
+    \IEEEauthorblockA{\normalfont Department of Informatics \\
+    Institut Teknologi Sepuluh Nopember\\
+    Surabaya, Indonesia \\
+    6025251032@student.its.ac.id}
+    \and
+    \IEEEauthorblockN{Jaya Ridho Nugroho}
+    \IEEEauthorblockA{\normalfont Department of Informatics \\
+    Institut Teknologi Sepuluh Nopember\\
+    Surabaya, Indonesia \\
+    6025251042@student.its.ac.id}
+    \linebreakand
+    \IEEEauthorblockN{Muhammad Nauval Daffanka}
+    \IEEEauthorblockA{\normalfont Department of Informatics \\
+    Institut Teknologi Sepuluh Nopember\\
+    Surabaya, Indonesia \\
+    6025251055@student.its.ac.id}
+    \and
+    \IEEEauthorblockN{Bagus Jati Santoso}
+    \IEEEauthorblockA{\normalfont Department of Informatics \\
+    Institut Teknologi Sepuluh Nopember\\
+    Surabaya, Indonesia \\
+    bagus@if.its.ac.id}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Generative artificial intelligence has shifted cloud datacenter traffic, making token throughput rather than CPU utilization the key metric for resource provisioning. However, Large Language Model (LLM) inference workloads exhibit heterogeneous burst characteristics across services, challenging proactive scaling that must avoid both service-level objective violations and idle hardware costs. We present an end-to-end pipeline that forecasts per-minute token throughput from the Microsoft Azure Public Dataset, evaluating tree-based regressors (LightGBM, CatBoost) and recurrent networks (LSTM, GRU) against a reactive $t-1$ Naive baseline across Conversational, Coding, and Multimodal profiles. Diebold-Mariano testing reveals that forecasting efficacy is strictly workload-dependent. On the 7-day Multimodal trace, recurrent models are statistically superior, with GRU reducing Mean Absolute Error (MAE) to 176,038.49 tokens and Weighted Absolute Percentage Error (WAPE) to 43.43\% versus the baseline's 203,505.46 (50.21\%). Conversely, on the highly volatile Coding workload ($CV = 1.0248$), learning models severely under-predict traffic spikes (WAPE exceeding 319\%), whereas the reactive Naive baseline achieves significantly lower relative error with an MAE of 183,912.45 tokens (WAPE 125.64\%).
+\end{abstract}
+
+\begin{IEEEkeywords}
+Workload forecasting, Large Language Models, Cloud computing, Gradient Boosting, Recurrent Neural Networks.
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+The rapid proliferation of generative artificial intelligence has shifted cloud data center workloads from conventional request-response services toward Large Language Model (LLM) inference \cite{chittyvenkata2024llminference}. Unlike traditional workloads where resource pressure is monitored via CPU or memory utilization, LLM inference consists of two computationally distinct phases: a compute-bound prefill stage and a memory-bandwidth-bound decode stage \cite{patel2024splitwise}. Because providers meter and bill consumption per token rather than per machine-hour, token throughput has emerged as the metric that most accurately reflects both technical load and operational cost \cite{stojkovic2025dynamollm}.
+
+This token-centric paradigm introduces a provisioning trade-off. Under-provisioning triggers service-level objective (SLO) violations, while over-provisioning inflates energy expenditure and capital costs \cite{stojkovic2025dynamollm, phalak2023sirm}. Proactive autoscaling mitigates these issues but relies on accurate token-level demand forecasting. However, whether traditional cloud telemetry forecasting techniques can successfully transfer to the highly volatile token-volume signals characteristic of generative serving workloads remains an open operational question.
+
+This transfer is challenging due to the heterogeneous nature of token demand across different service types. Conversational assistants exhibit diurnal regularity, whereas coding and copilot services suffer from unpredictable, high-magnitude bursts when developers submit large contexts \cite{stojkovic2025dynamollm}. These content-driven bursts differ significantly from standard cloud traces (e.g., Google Borg or Alibaba), meaning a forecasting method optimized for smooth traffic may fail during critical operational spikes.
+
+A review of the literature reveals a significant gap. Most cloud workload forecasting studies, spanning ARIMA \cite{liu2022research}, gradient boosting, and recurrent neural networks (LSTM/GRU), evaluate predictions using infrastructure-level metrics rather than token throughput. While public Azure LLM traces exist, they have been utilized primarily for scheduling and cluster design rather than direct token-volume forecasting. To the best of our knowledge, few studies have systematically benchmarked gradient boosting regressors, recurrent neural networks, and reactive baselines across conversational, coding, and multimodal traces with disparate burst characteristics. 
+
+This paper addresses this gap by constructing an end-to-end predictive pipeline using the Microsoft Azure Public Dataset to forecast per-minute token throughput across three distinct inference profiles: Conversational (CONV), Coding (CODE), and Multimodal. We evaluate four architectures (LightGBM, CatBoost, LSTM, and GRU) against a reactive $t-1$ naive baseline, using chronological splitting and Diebold-Mariano significance testing.
+
+The principal contributions of this work are threefold:
+\begin{itemize}
+    \item A direct forecasting comparison of gradient boosting, recurrent, and naive models is provided on token-level Azure LLM inference traces instead of infrastructure proxies.
+    \item Model performance is demonstrated to be highly contingent on workload character; recurrent networks excel on long-horizon multimodal traces, while the naive baseline statistically outperforms learning-based models on highly volatile coding traces.
+    \item These empirical insights are translated into practical provisioning guidance, recommending proactive recurrent-network scaling for multimodal workloads and reactive, threshold-based scaling for bursty coding endpoints.
+\end{itemize}
+
+The remainder of this paper is organized as follows: Section~II surveys related work, Section~III details the methodology, Section~IV presents the experimental results, and Section~V concludes the paper.
+\section{Related Works}
+
+To contextualize the predictive modeling of Large Language Model (LLM) workloads, we survey the existing literature across cloud resource management, time-series forecasting, and machine learning architectures. Table~\ref{tab:sota} provides a structured comparison of the state-of-the-art (SOTA) research, delineating the targets, methods, and key findings of prior works.
+
+\begin{table*}[htbp]
+\caption{State-of-the-Art (SOTA) Literature Comparison}
+\label{tab:sota}
+\centering
+\begin{tabular}{lp{4cm}p{4cm}p{6.5cm}}
+\hline
+\textbf{Reference} & \textbf{Target / Dataset} & \textbf{Methodology} & \textbf{Key Findings \& Limitations} \\ \hline
+Patel et al.~\cite{patel2024splitwise} & Azure LLM Traces & Phase-splitting (Splitwise) & Prefill is compute-bound, decode is memory-bound; splitting hardware optimizes serving. \\
+Stojkovic et al.~\cite{stojkovic2025dynamollm} & Azure LLM Traces & Dynamic cluster configuration & Dynamic instance and model parallelism reduces energy consumption. \\
+Microsoft~\cite{azurellm2024} & Azure LLM Traces & Trace Dataset Release & Token counts capture diurnal/weekly cycles; structurally distinct from VM logs. \\
+Symeonidis et al.~\cite{symeonidis2025datasets} & Dataset Survey & Systematic Mapping Study & Classifies LLM traces as a separate category from VM/container logs. \\
+Masdari \& Khoshnevis~\cite{masdari2020survey} & Cloud Workloads & Forecasting Survey & Classified forecasting approaches by stationarity, seasonality, and burst tolerance. \\
+Karim et al.~\cite{karim2021bhyprec} & Google/PlanetLab Traces & Bi-LSTM Hybrid (BHyPreC) & Bi-LSTM improves over unidirectional LSTM on VM CPU workloads. \\
+Kumar et al.~\cite{kumar2018lstmrnn} & Datacenter VM Traces & LSTM-RNN & Gated neural networks capture temporal VM request patterns. \\
+Nashold \& Krishnan~\cite{nashold2020lstmsarima} & Cluster CPU Traces & LSTM vs. SARIMA & Relative advantage depends on trace volatility; linear limits in SARIMA. \\
+Janardhanan \& Barrett~\cite{janardhanan2017cpu} & Datacenter CPU Traces & LSTM vs. ARIMA & LSTM is superior only with sufficient historical depth. \\
+Karim~\cite{karim2022integrated}, Leka~\cite{leka2021cnnlstm} & Cloud VM Traces & Integrated DL \& CNN-LSTM & Hybrids improve CPU/memory prediction; do not address token profiles. \\
+Lackinger et al.~\cite{lackinger2024timeseries} & VM Workload Benchmarks & Transformer, LSTM, ARIMA & LSTM and naive models dominate on infrastructure metrics. \\
+Chen~\cite{chen2016xgboost}, Ke~\cite{ke2017lightgbm} & Tabular Telemetry & XGBoost \& LightGBM & Fast, tree-based models; require lag-feature expansion, linear limits. \\ \hline
+\end{tabular}
+\end{table*}
+
+The literature reviewed reveals a layered set of gaps rather than a single omission. First, the substantial majority of cloud workload forecasting studies, including the LSTM, GRU, and hybrid CNN-LSTM contributions surveyed in the literature (Table~\ref{tab:sota}), are evaluated against infrastructure-level metrics such as CPU utilization, memory occupancy, or VM request counts. None of the reviewed studies forecast token-level consumption, the unit in which LLM inference services are both metered and billed, leaving open the question of whether forecasting techniques validated on CPU traces generalize to a metric driven by user-submitted content volume rather than scheduler-level resource allocation.
+
+Second, despite the public availability of Azure's LLM inference traces and the rich systems-level analyses built upon them~\cite{patel2024splitwise,stojkovic2025dynamollm}, these datasets have been employed almost exclusively for cluster design, energy management, and scheduling research. Forecasting research that treats token throughput itself as the target variable, particularly across multiple inference service types with materially different burst characteristics, remains conspicuously absent from the published record. Third, no publicly documented study has directly compared gradient boosting regressors against naive reactive baselines and recurrent architectures specifically for short-term token-volume forecasting across conversational, coding, and multimodal Azure LLM traces, despite the demonstrated suitability of gradient boosting implementations such as XGBoost and LightGBM for lag-based tabular forecasting in adjacent domains. The comparative behavior of such gradient boosting models under the volatility extremes that characterize coding telemetry, where a reactive naive baseline has been shown in adjacent experimentation to outperform considerably more complex models, remains an open empirical question rather than a settled finding.
+
+Finally, the practical deployment angle that motivates much of the cloud forecasting literature, namely the translation of forecast accuracy into actionable autoscaling policy, has rarely been extended to LLM-serving infrastructure with its distinct cost structure and SLO regime. A forecasting method that is accurate on average but fails precisely during the highest-impact burst events offers limited operational value to a cloud provider whose primary concern is avoiding SLO violations during demand spikes while minimizing idle GPU capacity during quiet periods. Closing this gap requires not only a forecasting comparison grounded in real Azure LLM inference traces, but also an explicit accounting of how prediction errors are distributed across the regimes, steady, trending, and bursty, that different inference service types exhibit.
+
+The convergence of these gaps motivates the methodology adopted in this study. By forecasting per-minute token throughput directly from the Azure LLM inference traces using lag-engineered features fed into LightGBM and CatBoost, and by benchmarking these gradient boosting models, together with recurrent LSTM and GRU networks, against a reactive naive baseline across conversational, coding, and multimodal workload profiles, the present work addresses a forecasting problem that the existing cloud workload \cite{ruan2022cloud} literature has not directly examined, while extending the systems-oriented Azure trace analyses toward a forecasting-centric evaluation that has direct bearing on automated, cost-aware provisioning of LLM inference infrastructure.
+
+\section{Proposed Method}
+To evaluate predictive capabilities across distinct cloud workloads, an end-to-end time-series forecasting pipeline was constructed (Fig.~\ref{fig:pipeline}). This section details data acquisition, feature construction, predictive architectures, and experimental reproducibility settings.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.7\columnwidth]{Overall Methodology Pipeline2.jpg}
+\caption{Overall methodology pipeline from data acquisition to statistical evaluation.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Data Acquisition and Workload Volatility Profiling}
+The empirical data were extracted from real-world Large Language Model inference telemetry in the Microsoft Azure Public Dataset, encompassing three distinct operational environments: Conversational (CONV), Coding (CODE), and Multimodal. Individual request records were aggregated into non-overlapping 1-minute intervals, with empty minutes imputed as zero to preserve continuous temporal alignment. The target variable $y_t$ represents the total aggregate token throughput (the sum of input context tokens and output generated tokens) processed during minute interval $t$.
+
+To prevent look-ahead bias and temporal data leakage, each timeline was chronologically partitioned into an 80\% training segment and a 20\% out-of-sample test segment:
+\begin{itemize}
+    \item \textbf{CONV Workload:} Spans 60 consecutive minutes ($N=57$ effective time steps post lag generation), partitioned into $N_{\text{train}} = 45$ (78.9\%) and $N_{\text{test}} = 12$ (21.1\%).
+    \item \textbf{CODE Workload:} Spans 58 consecutive minutes ($N=55$ effective time steps), partitioned into $N_{\text{train}} = 44$ (80.0\%) and $N_{\text{test}} = 11$ (20.0\%).
+    \item \textbf{MULTIMODAL Workload:} Spans 7 continuous days comprising 10,080 minutes ($N=10,077$ effective time steps), partitioned into $N_{\text{train}} = 8,061$ (80.0\%) and $N_{\text{test}} = 2,016$ (20.0\%).
+\end{itemize}
+
+\begin{table}[htbp]
+\caption{Statistical and Volatility Profiling of Azure LLM Workloads}
+\label{tab:workload_stats}
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lrrrrrrrr}
+\hline
+\textbf{Workload} & \textbf{Total $N$} & \textbf{Mean ($\mu$)} & \textbf{Std ($\sigma$)} & \textbf{CV} & \textbf{PAR} & \textbf{ACF$_1$} & \textbf{ACF$_5$} & \textbf{P95 Spike} \\ \hline
+\textbf{CONV} & 60 & 440,842 & 154,398 & 0.3502 & 1.7709 & 0.7345 & 0.3376 & 716,445 \\
+\textbf{CODE} & 58 & 315,618 & 323,431 & \textbf{1.0248} & \textbf{3.9854} & \textbf{0.1525} & 0.4462 & 939,539 \\
+\textbf{MULTIMODAL} & 10,080 & 307,300 & 273,216 & 0.8891 & 8.0583 & 0.6183 & 0.5437 & 877,227 \\ \hline
+\end{tabular}%
+}
+\end{table}
+
+To rigorously characterize the volatility of each trace, Table~\ref{tab:workload_stats} reports the Coefficient of Variation ($CV = \sigma / \mu$), Peak-to-Average Ratio ($PAR = \max(y) / \mu$), Autocorrelation at Lag-1 ($\text{ACF}_1$) and Lag-5 ($\text{ACF}_5$), alongside the 95th percentile spike threshold. The CODE workload displays an extreme volatility profile characterized by $CV = 1.0248 > 1.0$, indicating a hyper-exponential, over-dispersed burstiness distribution, and a low $\text{ACF}_1 = 0.1525$, reflecting near-zero short-term memory. Conversely, the MULTIMODAL trace maintains persistent autocorrelation ($\text{ACF}_1 = 0.6183$, $\text{ACF}_{60} = 0.4066$) reflecting structured diurnal demand. The compressed 1-hour windows in CONV and CODE deliberately isolate localized micro-burst dynamics typical of rapid cluster cold-start scheduling, whereas the 7-day Multimodal trace captures macro-level cycles. Continuous variables were Min-Max normalized to $[0, 1]$ using parameters derived strictly from training data.
+
+\subsection{Feature Formulation and Sliding Window Paradigm}
+To transform sequential telemetry into a supervised regression framework, an autoregressive feature representation was constructed for each minute $t$. For each target step $y_t$, the input feature vector $\mathbf{x}_t \in \mathbb{R}^4$ was formulated using historical lag steps and a rolling moving average:
+$$\mathbf{x}_t = \left[ y_{t-1}, y_{t-2}, y_{t-3}, \text{MA}_3(t) \right]^T$$
+where the rolling average is defined over a backward window of $k=3$ steps:
+$$\text{MA}_3(t) = \frac{1}{3} \sum_{i=1}^{3} y_{t-i}$$
+For neural sequence architectures (LSTM and GRU), the input tensors were reshaped via a sliding temporal window paradigm (Fig.~\ref{fig:sliding_window}) into a 3D tensor of dimension $(B, 1, 4)$, where $B$ denotes batch size, mapping historical dependencies directly to target $y_t$.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\columnwidth]{Time-Series Sliding Window Formulation.jpg}
+\caption{Time-series sliding window formulation mapping historical lags to future targets.}
+\label{fig:sliding_window}
+\end{figure}
+
+\subsection{Predictive Architectures}
+Five representative predictive paradigms were benchmarked:
+\begin{enumerate}
+    \item \textbf{Naive Baseline ($t-1$):} A zero-parameter reactive baseline assuming temporal inertia: $\hat{y}_{t} = y_{t-1}$.
+    \item \textbf{LightGBM Regressor:} A gradient boosted decision tree framework implementing leaf-wise tree growth with depth limits to optimize split gain over tabular lag matrices.
+    \item \textbf{CatBoost Regressor:} A gradient boosting implementation utilizing symmetric oblivious decision trees to suppress gradient variance and prevent overfitting in volatile regimes.
+    \item \textbf{Long Short-Term Memory (LSTM):} A recurrent neural network utilizing forget ($f_t$), input ($i_t$), and output ($o_t$) gating mechanisms to regulate hidden state transitions and preserve long-term gradient flow:
+    $$c_t = f_t \odot c_{t-1} + i_t \odot \tilde{c}_t$$
+    \item \textbf{Gated Recurrent Unit (GRU):} A computationally streamlined recurrent architecture coupling cell and hidden states through reset and update gates to reduce parameter footprint while maintaining temporal gating efficacy.
+\end{enumerate}
+While linear statistical benchmarks (such as ARIMA or exponential smoothing) are standard in macro-telemetry forecasting, their strict stationarity requirements and substantial sample warm-up render them structurally unsuitable for compressed, discontinuous 1-hour micro-burst regimes \cite{janardhanan2017cpu, nashold2020lstmsarima}. Consequently, moving-window dynamics were represented through the rolling feature $\text{MA}_3$, evaluated against the zero-overhead reactive $t-1$ Naive baseline.
+
+\subsection{Experimental Setup and Reproducibility Settings}
+To eliminate stochastic variation across runs, all random number generators across Python, NumPy, and TensorFlow were initialized to a fixed seed of 42, and deterministic operations were enforced via \texttt{TF\_DETERMINISTIC\_OPS=1}. Table~\ref{tab:hyperparams} provides the comprehensive architectural specifications and hyperparameter settings employed across all models.
+
+\begin{table}[htbp]
+\caption{Model Hyperparameters and Training Configuration}
+\label{tab:hyperparams}
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lll}
+\hline
+\textbf{Model} & \textbf{Hyperparameter / Component} & \textbf{Configured Value} \\ \hline
+\textbf{Shared Setup} & Random Seed / Determinism & 42 (\texttt{TF\_DETERMINISTIC\_OPS=1}) \\
+ & Feature Vector Dimension & 4 (Lags 1--3, Rolling Mean 3) \\
+ & Lookback Window ($w$) & 3 minutes ($k=3$) \\
+ & Train / Test Split & 80\% Chronological / 20\% Test \\ \hline
+\textbf{LightGBM} & Boosting Type & GBDT (Leaf-wise growth) \\
+ & Random State & 42 \\ \hline
+\textbf{CatBoost} & Tree Structure & Oblivious Trees \\
+ & Random Seed & 42 \\ \hline
+\textbf{LSTM \& GRU} & Recurrent Layer 1 & 64 hidden units (ReLU activation) \\
+ & Fully Connected Layer 2 & 32 units (ReLU activation) \\
+ & Output Layer & 1 unit (Linear activation) \\
+ & Optimization / Loss & Adam ($\text{lr}=10^{-3}$) / MSE Loss \\
+ & Batch Size / Shuffle & 32 / False (Preserve Chronology) \\
+ & Training Epochs & 100 (CONV, CODE); 50 (MULTIMODAL) \\ \hline
+\end{tabular}%
+}
+\end{table}
+
+Model accuracy on the test set was quantified using Mean Absolute Error (MAE) and Root Mean Squared Error (RMSE):
+$$MAE = \frac{1}{N} \sum_{i=1}^{N} |y_i - \hat{y}_i|$$
+$$RMSE = \sqrt{\frac{1}{N} \sum_{i=1}^{N} (y_i - \hat{y}_i)^2}$$
+To verify whether observed predictive differences reflect statistically meaningful discrepancies rather than stochastic variation, the Diebold-Mariano (DM) test with the Harvey et al. (1997) small-sample modification was executed across competing models.
+
+% ----------------------------------------------------------------
+
+\section{Results and Discussion}
+In this section, we present the empirical results of our predictive modeling experiments across three distinct real-world Large Language Model (LLM) inference workloads extracted from the Microsoft Azure Public Dataset: Conversational (CONV), Coding (CODE), and Multimodal. To ensure strict experimental reproducibility and eliminate stochastic noise during model initialization, all random seeds across the software libraries (including TensorFlow/Keras, NumPy, and Python's native random module) were globally locked to a fixed seed value of 42. The forecasting capabilities of four advanced predictive architectures, namely LightGBM, CatBoost, Long Short-Term Memory (LSTM), and Gated Recurrent Unit (GRU), are evaluated and benchmarks are established against a baseline $t-1$ Naive model.
+
+\subsection{Predictive Performance Evaluation}
+The forecasting accuracy of each model was rigorously evaluated on a chronologically partitioned test set comprising the final 20\% of each workload timeline. This chronological split prevents temporal data leakage, ensuring that the model evaluates data strictly ahead of its training window. Accuracy was measured across absolute scales using Mean Absolute Error (MAE) and Root Mean Squared Error (RMSE), as well as scale-independent normalized metrics: Weighted Absolute Percentage Error (WAPE) and Normalized Root Mean Squared Error (NRMSE):
+$$\text{WAPE} = \frac{\sum_{i=1}^{N} |y_i - \hat{y}_i|}{\sum_{i=1}^{N} y_i} \times 100\%$$
+$$\text{NRMSE} = \frac{\text{RMSE}}{\bar{y}_{\text{test}}} \times 100\%$$
+Table~\ref{tab:performance} summarizes the evaluation metrics across all experimental configurations.
+
+\begin{table}[htbp]
+\caption{Predictive Performance Comparison Across Datasets}
+\label{tab:performance}
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{llrrrr}
+\hline
+\textbf{Dataset} & \textbf{Model} & \textbf{MAE (Token)} & \textbf{RMSE (Token)} & \textbf{WAPE (\%)} & \textbf{NRMSE (\%)} \\ \hline
+\textbf{CONV} & Naive Baseline & \textbf{41,234.08} & \textbf{74,651.82} & \textbf{14.45\%} & \textbf{26.16\%} \\
+ & LightGBM & 131,623.16 & 156,776.73 & 46.13\% & 54.94\% \\
+ & CatBoost & 148,756.98 & 177,737.34 & 52.13\% & 62.29\% \\
+ & LSTM & 113,968.24 & 139,275.57 & 39.94\% & 48.81\% \\
+ & GRU & 96,955.66 & 126,423.96 & 33.98\% & 44.31\% \\ \hline
+\textbf{CODE} & Naive Baseline & \textbf{183,912.45} & \textbf{240,293.70} & \textbf{125.64\%} & \textbf{164.15\%} \\
+ & LightGBM & 500,167.74 & 538,493.41 & 341.68\% & 367.87\% \\
+ & CatBoost & 653,335.58 & 742,775.58 & 446.32\% & 507.42\% \\
+ & LSTM & 467,517.16 & 513,970.39 & 319.38\% & 351.11\% \\
+ & GRU & 602,260.92 & 656,365.92 & 411.43\% & 448.39\% \\ \hline
+\textbf{MULTIMODAL} & Naive Baseline & 203,505.46 & 291,512.13 & 50.21\% & 71.92\% \\
+ & LightGBM & 180,545.40 & 259,277.91 & 44.54\% & 63.97\% \\
+ & CatBoost & 179,713.68 & \textbf{258,374.44} & 44.34\% & \textbf{63.74\%} \\
+ & LSTM & 176,296.13 & 261,676.70 & 43.49\% & 64.56\% \\
+ & GRU & \textbf{176,038.49} & 260,482.15 & \textbf{43.43\%} & 64.26\% \\ \hline
+\end{tabular}%
+}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{model_comparison_MAE.png}
+\caption{Bar chart comparison of Mean Absolute Error across operational scenarios.}
+\label{fig:mae_comparison}
+\end{figure}
+
+An analysis of Table~\ref{tab:performance} and Fig.~\ref{fig:mae_comparison} demonstrates a distinct performance divergence dictated by workload volatility regimes. On the 7-day Multimodal dataset, recurrent architectures (GRU and LSTM) achieve the lowest prediction errors, lowering MAE to approximately 176K tokens and WAPE to $43.43\%$ (compared to the baseline's 203K tokens and $50.21\%$ WAPE). Conversely, on the volatile CODE workload, machine learning regressors experience severe degradation, with WAPE escalating beyond $319\%$ and NRMSE exceeding $351\%$. In contrast, the reactive Naive baseline limits relative error to a WAPE of $125.64\%$ and an NRMSE of $164.15\%$, illustrating the operational resilience of zero-lag inertia under heavy-tailed burst distributions.
+
+\subsection{Statistical Significance Analysis}
+To mathematically validate whether observed variations in predictive errors represent genuine architectural advantages rather than stochastic noise, we executed the Diebold-Mariano (DM) test with the Harvey et al. (1997) small-sample modification. The null hypothesis ($H_0$) states that two competing models exhibit equal predictive accuracy based on squared forecast errors. To address potential benchmarking bias, Table~\ref{tab:dm_test} reports the pairwise DM test statistics and asymptotic $p$-values across model configurations.
+
+\begin{table}[htbp]
+\caption{Comprehensive Pairwise Diebold-Mariano Test Results}
+\label{tab:dm_test}
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lllrrp{2.8cm}}
+\hline
+\textbf{Dataset} & \textbf{Model 1} & \textbf{Model 2} & \textbf{DM Stat} & \textbf{$p$-value} & \textbf{Winner ($p < 0.05$)} \\ \hline
+\textbf{CONV} & Naive & LightGBM & -2.3744 & 0.0369 & Naive ($p=0.0369$) \\
+ & Naive & CatBoost & -2.3319 & 0.0397 & Naive ($p=0.0397$) \\
+ & Naive & LSTM & -2.1899 & 0.0510 & Tied ($p=0.0510$) \\
+ & Naive & GRU & -1.8120 & 0.0973 & Tied ($p=0.0973$) \\
+ & LightGBM & CatBoost & -1.5974 & 0.1385 & Tied \\
+ & LightGBM & LSTM & 2.6433 & 0.0229 & LSTM ($p=0.0229$) \\
+ & LightGBM & GRU & 3.4332 & 0.0056 & GRU ($p=0.0056$) \\
+ & CatBoost & LSTM & 2.3110 & 0.0412 & LSTM ($p=0.0412$) \\
+ & CatBoost & GRU & 2.7489 & 0.0189 & GRU ($p=0.0189$) \\
+ & LSTM & GRU & 5.3130 & 0.0002 & GRU ($p=0.0002$) \\ \hline
+\textbf{CODE} & Naive & LightGBM & -2.9825 & 0.0137 & Naive ($p=0.0137$) \\
+ & Naive & CatBoost & -2.9294 & 0.0151 & Naive ($p=0.0151$) \\
+ & Naive & LSTM & -2.5836 & 0.0272 & Naive ($p=0.0272$) \\
+ & Naive & GRU & -3.0951 & 0.0113 & Naive ($p=0.0113$) \\
+ & LightGBM & CatBoost & -2.4664 & 0.0333 & LightGBM ($p=0.0333$) \\
+ & LightGBM & LSTM & 1.9702 & 0.0771 & Tied \\
+ & LightGBM & GRU & -2.4943 & 0.0318 & LightGBM ($p=0.0318$) \\
+ & CatBoost & LSTM & 2.8917 & 0.0161 & LSTM ($p=0.0161$) \\
+ & CatBoost & GRU & 1.8990 & 0.0868 & Tied \\
+ & LSTM & GRU & -3.4659 & 0.0061 & LSTM ($p=0.0061$) \\ \hline
+\textbf{MULTIMODAL} & Naive & LightGBM & 5.3778 & 0.0000 & LightGBM ($p<0.0001$) \\
+ & Naive & CatBoost & 5.5855 & 0.0000 & CatBoost ($p<0.0001$) \\
+ & Naive & LSTM & 4.9582 & 0.0000 & LSTM ($p<0.0001$) \\
+ & Naive & GRU & 5.3898 & 0.0000 & GRU ($p<0.0001$) \\
+ & LightGBM & CatBoost & 0.4760 & 0.6341 & Tied \\
+ & LightGBM & LSTM & -0.7712 & 0.4407 & Tied \\
+ & LightGBM & GRU & -0.3950 & 0.6929 & Tied \\
+ & CatBoost & LSTM & -1.0401 & 0.2984 & Tied \\
+ & CatBoost & GRU & -0.6931 & 0.4883 & Tied \\
+ & LSTM & GRU & 1.8143 & 0.0698 & Tied ($p=0.0698$) \\ \hline
+\end{tabular}%
+}
+\end{table}
+
+The pairwise DM test results reveal several structural insights:
+\begin{enumerate}
+    \item \textbf{Multimodal Trace:} All machine learning and deep learning models statistically outperform the reactive Naive baseline at $p < 0.0001$. Meanwhile, pairwise comparisons among LightGBM, CatBoost, LSTM, and GRU yield non-significant differences ($p > 0.05$). This indicates that with sufficient historical observations, both tree-based and recurrent architectures capture the underlying temporal trends with comparable predictive adequacy, without a single model demonstrating a statistically significant margin over rivals.
+    \item \textbf{Coding Trace:} The Naive baseline statistically outperforms every machine learning model ($p < 0.05$ across all rival pairs). This confirms that the superiority of reactive tracking on this trace is statistically robust and not an artifact of test sampling.
+    \item \textbf{Conversational Trace:} The Naive baseline outperforms gradient boosted models ($p < 0.05$) while remaining statistically tied with LSTM ($p = 0.0510$) and GRU ($p = 0.0973$). Among deep sequence architectures, GRU significantly outperforms LSTM ($p = 0.0002$), benefiting from lower parameter overhead in compressed horizons.
+\end{enumerate}
+
+\subsection{Failure Analysis: The Coding Workload Anomaly}
+A central empirical finding of this evaluation is the operational breakdown of learning-based models when exposed to generative AI coding telemetry. As documented across Table~\ref{tab:performance} and Table~\ref{tab:dm_test}, the reactive Naive baseline consistently demonstrates the lowest prediction error within the CODE scenario. To investigate the structural mechanics underlying this behavioral shift, residual error distributions were tracked.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{code_residual_analysis.png}
+\caption{Residual error tracking on the Coding dataset demonstrating universal under-prediction during traffic spikes.}
+\label{fig:residual_analysis}
+\end{figure}
+
+Residual analysis of the CODE dataset (Fig.~\ref{fig:residual_analysis}) isolates the specific failure mode: both tree-based regressors and deep recurrent models exhibit synchronous, severe under-prediction during abrupt token surges. In coding telemetry, a plausible structural driver is the pronounced variance in prompt context token volumes (such as automated workspace indexing or multi-file context inclusions), which manifest as sharp, discontinuous spikes separated by idle intervals. Because these bursts exhibit minimal autocorrelation ($\text{ACF}_1 = 0.1525$ in Table~\ref{tab:workload_stats}) and lack progressive ramps, autoregressive lag inputs fail to provide reliable predictive cues. Models attempting to minimize continuous loss functions are penalized by these step-level changes, rendering a reactive baseline mathematically more resilient under extreme volatility.
+
+\subsection{Discussion and Cloud Provisioning Implications}
+Translating forecast error profiles into practical autoscaling policy yields actionable guidelines for cluster resource orchestration. Although these recommendations are inferred from offline prediction error behavior rather than live cluster scheduling trials, they provide clear architectural principles for provisioning engines:
+\begin{enumerate}
+    \item \textbf{Macro-Trend and Multimodal AI Services:} For workloads exhibiting continuous diurnal patterns and extended historical telemetry, proactive auto-scaling utilizing recurrent neural architectures (GRU or LSTM) is recommended. Their ability to track evolving throughput trends enables preemptive capacity warmup, reducing cold-start latency.
+    \item \textbf{Burst-Dominant Coding Endpoints:} For workloads characterized by high volatility and near-zero lag autocorrelation, proactive time-series forecasters should be avoided due to the risk of severe under-provisioning during unannounced spikes. Instead, fast-reacting threshold policies matching immediate actual allocations represent a safer provisioning strategy.
+\end{enumerate}
+
+\section{Conclusion}
+
+This study examined resource provisioning dynamics in generative AI infrastructure by forecasting Large Language Model (LLM) per-minute token throughput across Conversational, Coding, and Multimodal traces from the Microsoft Azure Public Dataset. Evaluating gradient boosting regressors (LightGBM, CatBoost) and recurrent neural networks (LSTM, GRU) against a reactive $t-1$ Naive baseline demonstrated that predictive efficacy is fundamentally workload-dependent.
+
+Statistical validation via comprehensive pairwise Diebold-Mariano testing confirmed that in pattern-rich, multi-day multimodal environments, learning-based models systematically outperform the baseline ($p < 0.0001$), with GRU achieving the lowest MAE of 176,038.49 tokens. In contrast, on volatile coding traces, learning-based architectures universally under-predicted discontinuous token surges, allowing the reactive Naive baseline to achieve superior accuracy (MAE of 183,912.45 tokens, $p < 0.05$ against all models). 
+
+These findings suggest a bifurcated resource management framework: proactive recurrent forecasting for trending multimodal workloads, coupled with reactive threshold-driven scaling for volatile coding endpoints. As a primary limitation, this evaluation relies on offline time-series telemetry without live server scheduling metrics (e.g., GPU memory defragmentation, preemption overhead). Future research will validate these predictive mechanisms within live cluster provisioning simulators to measure end-to-end SLO violation rates and GPU cost efficiencies under dynamic workload switching.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}
